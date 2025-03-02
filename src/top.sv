@@ -1,16 +1,17 @@
-typedef struct packed {
-    logic [31:0] PCF;
-    logic MemWriteM;
-    logic [31:0] ALUResultM, WriteDataM, ReadDataM, InstrD, InstrF;
-    logic [1:0] ForwardAE, ForwardBE;
-    logic StallD, StallF, FlushD, FlushE;
-} cpu_outputs_t;
+`timescale 1ns / 1ps
 
 module top(
     input logic clk, reset,
-    input logic [6:0] Op,
-    input logic [2:0] funct3,
-    output cpu_outputs_t cpu_out
+    output logic [6:0] Op,           // Changed to output
+    output logic [2:0] funct3,       // Changed to output
+    output logic [31:0] PCF,
+    output logic MemWriteM,
+    output logic [31:0] ALUResultM, WriteDataM,
+    output logic [31:0] InstrD,
+    output logic StallD, StallF, FlushD, FlushE,
+    output logic [1:0] ForwardAE, ForwardBE,
+    output logic [31:0] ReadDataM,  // Ensure this is only an input
+    input logic [31:0] InstrF       // Ensure this is only an input
 );
 
     logic ALUSrcAE, RegWriteM, RegWriteW, ZeroE, SignE, PCJalSrcE, PCSrcE, RegWriteE;
@@ -22,21 +23,27 @@ module top(
     logic [4:0] Rs1D, Rs2D, Rs1E, Rs2E;
     logic [4:0] RdE, RdM, RdW;
 
+    // Ensure ALUResultM is word-aligned (multiple of 4)
     logic [31:0] alignedALUResultM;
-    assign alignedALUResultM = cpu_out.ALUResultM & 32'hFFFFFFFC;
+    assign alignedALUResultM = ALUResultM & 32'hFFFFFFFC; // Mask lower 2 bits
 
+    // Derive Op and funct3 from InstrF
+    assign Op = InstrF[6:0];        // Opcode (7 bits)
+    assign funct3 = InstrF[14:12];  // funct3 field (3 bits)
+
+    // Instantiate controller
     controller c(
         .clk(clk), 
         .reset(reset), 
         .Op(Op),
         .funct3(funct3),
-        .InstrD(cpu_out.InstrD),
+        .InstrD(InstrD),            
         .ZeroE(ZeroE), 
         .SignE(SignE), 
-        .FlushE(cpu_out.FlushE),
+        .FlushE(FlushE),
         .ResultSrcE0(ResultSrcE0), 
         .ResultSrcW(ResultSrcW), 
-        .MemWriteM(cpu_out.MemWriteM),
+        .MemWriteM(MemWriteM),
         .PCJalSrcE(PCJalSrcE), 
         .PCSrcE(PCSrcE), 
         .ALUSrcAE(ALUSrcAE), 
@@ -48,6 +55,7 @@ module top(
         .ALUControlE(ALUControlE)
     );
 
+    // Hazard Unit
     hazardunit h(
         .Rs1D(Rs1D), 
         .Rs2D(Rs2D), 
@@ -55,19 +63,20 @@ module top(
         .Rs2E(Rs2E), 
         .RdE(RdE), 
         .RdM(RdM), 
-        .RdW(RdW),
+        .RdW(RdW), 
         .RegWriteM(RegWriteM), 
         .RegWriteW(RegWriteW), 
         .ResultSrcE0(ResultSrcE0), 
         .PCSrcE(PCSrcE), 
-        .ForwardAE(cpu_out.ForwardAE), 
-        .ForwardBE(cpu_out.ForwardBE),
-        .StallD(cpu_out.StallD), 
-        .StallF(cpu_out.StallF), 
-        .FlushD(cpu_out.FlushD), 
-        .FlushE(cpu_out.FlushE)
+        .ForwardAE(ForwardAE), 
+        .ForwardBE(ForwardBE),
+        .StallD(StallD), 
+        .StallF(StallF), 
+        .FlushD(FlushD), 
+        .FlushE(FlushE)
     );
 
+    // Datapath
     datapath dp(
         .clk(clk), 
         .reset(reset), 
@@ -81,14 +90,14 @@ module top(
         .ALUControlE(ALUControlE),
         .ZeroE(ZeroE), 
         .SignE(SignE), 
-        .PCF(cpu_out.PCF), 
-        .InstrF(cpu_out.InstrF), 
-        .InstrD(cpu_out.InstrD), 
-        .ALUResultM(cpu_out.ALUResultM), 
-        .WriteDataM(cpu_out.WriteDataM), 
-        .ReadDataM(cpu_out.ReadDataM), 
-        .ForwardAE(cpu_out.ForwardAE), 
-        .ForwardBE(cpu_out.ForwardBE), 
+        .PCF(PCF), 
+        .InstrF(InstrF), 
+        .InstrD(InstrD), 
+        .ALUResultM(ALUResultM), 
+        .WriteDataM(WriteDataM), 
+        .ReadDataM(ReadDataM), 
+        .ForwardAE(ForwardAE), 
+        .ForwardBE(ForwardBE), 
         .Rs1D(Rs1D), 
         .Rs2D(Rs2D), 
         .Rs1E(Rs1E), 
@@ -96,32 +105,30 @@ module top(
         .RdE(RdE), 
         .RdM(RdM), 
         .RdW(RdW), 
-        .StallD(cpu_out.StallD), 
-        .StallF(cpu_out.StallF), 
-        .FlushD(cpu_out.FlushD), 
-        .FlushE(cpu_out.FlushE)
+        .StallD(StallD), 
+        .StallF(StallF), 
+        .FlushD(FlushD), 
+        .FlushE(FlushE)
     );
 
+    // Data Memory
     dmem dmem(
         .clk(clk), 
-        .we(cpu_out.MemWriteM), 
+        .we(MemWriteM), 
         .a(alignedALUResultM), 
-        .wd(cpu_out.WriteDataM), 
-        .rd(cpu_out.ReadDataM)
+        .wd(WriteDataM), 
+        .rd(ReadDataM) 
     );
 
-    imem imem(
-        .a(cpu_out.PCF), 
-        .rd1(cpu_out.InstrF)
-    );
-
+    // Initialize memory (optional) for simulation
     initial begin
         $display("Memory initialized for simulation.");
     end
 
+    // Log memory writes
     always @(posedge clk) begin
-        if (cpu_out.MemWriteM) begin
-            $display("Writing data %h to address %h at time %0t", cpu_out.WriteDataM, cpu_out.ALUResultM, $time);
+        if (MemWriteM) begin
+            $display("Writing data %h to address %h at time %0t", WriteDataM, ALUResultM, $time);
         end
     end
 
